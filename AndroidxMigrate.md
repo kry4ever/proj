@@ -30,14 +30,16 @@ code就不贴了
 google是要求我们一刀切的，即要么全是androidx，要么全是support，但是此时如果我们有子仓库无法迁移到androidx怎么办？比如直播，工具线，他们都是给其他app使用的，如果切换到androidx必然导致其他使用support的宿主无法编译。
 先说一个前置的问题？为什么androidx不能与support兼容呢？首先这样会导致混乱，代码一样就是package name不同就存在两份代码，这不合理。那依赖的那些aar怎么办？它们好些都是三方库已经编译好了，它里面用support怎么处理？不用担心，因为官方在agp里面用的jetifier工具就是处理aar的，它会做字节码替换，把support的字节码替换成androidx的。可是源码编译怎么办呢？子仓的接口要求使用support的activity，但是主仓只有androidx的activity，必然导致编译错误，因此我们想能否hook子仓的产物呢？让它变成androidx的接口不就可以了吗？OK，先上架构图
 
+
+
 ![avatar](https://note.youdao.com/yws/public/resource/90e0e85a89029ebff0ad090ff0603f41/xmlnote/5844BA784F9E4DDD84C6845D6CC7783B/7603)
+
+
 
 具体分析可以看文档，这里简单说下就是去hook编译后的jar文件和xml，让它们变成androidx的接口，先强调下我们解决的是下层模块是support接口，上层模块是androidx的不兼容问题
 我们会在gradle task执行前后去hook。下面是伪代码
 
-project.gradle.taskGraph.addTaskExecutionListener(
-	new TaskExecutionListener() {
-	
+project.gradle.taskGraph.addTaskExecutionListener(new TaskExecutionListener() {
     @Override
     void beforeExecute(Task task) {
         try {
@@ -47,7 +49,7 @@ project.gradle.taskGraph.addTaskExecutionListener(
             e.printStackTrace()
         }
     }
-	
+
     @Override
     void afterExecute(Task task, TaskState taskState) {
         try {
@@ -62,21 +64,19 @@ project.gradle.taskGraph.addTaskExecutionListener(
 在task执行after之后，我们需要hook原来这个task的产物，因为它原来只有support的接口，我们需要用jetifier工具生产一份androidx的jar才能让上层顺利编译，也就是generateJetifierClassIfNeed做的工作
 
 fun generateJetifierClassIfNeed(enableHook: Boolean, task: Task) {
-    if (enableHook && matchLibPrepareJarTaskName(task)) {
-        val jetifyProcessor: Processor = Processor.createProcessor(
+    val jetifyProcessor: Processor = Processor.createProcessor(
             ConfigParser.loadDefaultConfig()!!
         )
         task.outputs.files.forEach { file ->
             if (!file.isDirectory) {
-                try {
-                    if (!file.name.toLowerCase().endsWith(".jar")) {
-                        return
+                if (!file.name.toLowerCase().endsWith(".jar")) {
+                        return@forEach
                     }
                     if (jetifyProcessor.isNewDependencyFile(file)) {
-                        return
+                        return@forEach
                     }
                     if (jetifyProcessor.isOldDependencyFile(file)) {
-                        return
+                        return@forEach
                     }
                     val fileSet = setOf(FileMapping(file, findJetifierFile(file)))
                     val transformedFile = jetifyProcessor.transform(fileSet, false).single()
@@ -84,12 +84,8 @@ fun generateJetifierClassIfNeed(enableHook: Boolean, task: Task) {
                         file.renameTo(findBackupFile(file))
                         findJetifierFile(file).renameTo(file)
                     }
-                } catch (e: Exception) {
-                    
-                }
             }
         }
-    }
 }
 
 
