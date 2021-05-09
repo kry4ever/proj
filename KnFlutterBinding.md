@@ -1,12 +1,15 @@
 ##背景
 
 上篇文章中我们提到飞聊项目采用的跨平台方案是kotlin-native，业务框架使用的是MRedux所以从原理上跨端的代码只能是逻辑层，对ui层是无能为力的，相比起flutter方案来说，flutter既可以ui跨平台，逻辑层也可以写到flutter中，从这点看flutter似乎更优。可是从另一个角度看，flutter主要问题还是在混合工程上，除非你的业务是和老代码完全无关的，不然像pb这种老业务已经很多地方在用的结构，flutter如何去访问数据？kn在这方面则更有优势，因为kn的内存和两端的内存都是相通的，能直接访问。所以如果我们用kn去做逻辑层，用flutter去做ui层，把两者结合起来能行吗？
+
+
 ##业务场景设想
 
 我们先看下为什么要去用kn结合flutter做跨端，而不是直接用flutter呢？假设当前我们要做一个评论系统，进入评论页面会有一个feed流去展示当前的评论，可是评论页面不是进入app后的一级界面，它路径比较深，但是首页需要展示一个红点数表示新收到的评论数，就这么个需求，如果要跨端怎么搞？
 方案1：如果我们用纯flutter做这件事，评论列表页应该没问题，问题在于如果整个model层都在flutter去做逻辑的话，如何实现启动后就在首页展示未读数？这样一来你必须在启动app后立马去启动flutter引擎对吧，因为你得执行dart代码才能走到评论的model管理，启动引擎可是会消耗较大的资源的，可是你可能根本不会进评论页去。（似乎Android上还做不到不启动FlutterActivity直接执行dart代码？）如何优化这件事？
 方案2：我们知道flutter有PlatformChannel可以跟native层面通信，那能否我把model逻辑层用native两端自己写（这样启动后可以不用管flutter，直接访问对应的model层展示红点数），然后flutter需要数据的时候用channel传递过去呢？答案是肯定的。这样就解决了方案1的问题
 方案3：方案2仍然存在一个问题是model层逻辑不是共用的，所以就引出了今天的主角KnFlutterBinding，我们做了一套系统让ui层用flutter写，model逻辑层用kn写，然后把两者绑定起来work
+
 ##设计思路
 
 kn的逻辑已采用单向数据流业务框架MRedux(可以看上篇文章介绍) ,
@@ -15,11 +18,13 @@ kn的逻辑已采用单向数据流业务框架MRedux(可以看上篇文章介�
  他们只用订阅State的变化，并发出改变State的Action就行了 
 ![avatar](https://note.youdao.com/yws/public/resource/6e9fd9e1dee89677c89074bd483f0af8/xmlnote/92C929A215E246E3B3D6BF640FDF0036/7593)
 这里flutter只是一种ui方案，如果还有其他ui方案我们一样可以扩展，这个地方也能看出前一篇文章说的MRedux框架的作用，如果不是这种松耦合，如果是接口耦合这个地方就无法用flutter做ui系统了，因为kn定义的接口是用kotlin写的，flutter用dart，两者语言都不一样，内存更是隔离的，自然无法work了。所以至此我们的主题变成了，如何用MRedux桥接flutter系统和kn系统
+
 ##架构设计
 
 
 不知道大家是否接触过以前的一种方案叫hybrid, 这个说的是整个界面用WebView去展示，js代码写逻辑，如果需要用到端上的能力则通过一种通道调用到native的函数。而这种通道是WebChromeClient的onConsoleMessage函数，简单说js端，用console.log("cmdstring")去打印日志，native端就会在onConsoleMessage收到回调，并且参数是个String，这就意味着如果这个String是个json，它就可以传递一些列消息过来，比如我要调用native函数的名字，参数等等。这个叫做js-bridge。我们的这个设计有同样的思路，flutter就好比js端，通道就是platformChannel，不过比起js-bridge更优的是这个框架扩展性更好，不会因为业务代码增多导致桥接代码变得复杂
 所以基本原理是远程代理的思想，根据MRedux的设计，ui端应该去观测state数据，并且向model层dispatch改变数据的action。可是我们说了flutter代码和kn代码是两种语言，并且内存隔离，所以我们得想一种办法在flutter端产生一种代理，然后通过PlatformChannel把命令传送到kn端，并且kn端执行完逻辑后再把数据传输回flutter层。对flutter而言它看不到kn的存在，它不知道自己访问的是代理，对kn而言，它更不知道ui层是flutter
+
 ##实现原理
 
 可以看到架构图中右半部分是kn的内存，我们的MRedux框架运行在这里，它的Store，State，Action都运行在端上的内存里，而框架图的左边是flutter的内存，StoreProxy，StateProxy，ActionProxy都是dart代码，对于flutter来说，只要在StoreProxy上dispatch了ActionProxy，那么就会真的在kn的内存中调用一个对应action，只要订阅了StateProxy，就会真的有数据从kn端传来，理解了这个原理，不难知道我们思路跟js-bridge有相同之处，都是传递一个String到端上，然后端上解析后调用自己的函数。不同之处在于我们有自己的框架封装，框架代码不跟着业务代码膨胀
@@ -40,6 +45,7 @@ kn的逻辑已采用单向数据流业务框架MRedux(可以看上篇文章介�
 ![avatar](https://note.youdao.com/yws/public/resource/6e9fd9e1dee89677c89074bd483f0af8/xmlnote/1A619A4AC8ED4B5DB1BF3EB612CC3D6B/7594)
 
 此时我们先总结下，我们已经理清楚了一条数据传递路线，即flutter到kn，flutter通过PlatformChannel传递了一个String到kn层，这个String是个kotlin的类的全限定类名，只不过我们做了包装，用三个Proxy封装起来，如此flutter的使用者就无法感知到这个过程，只能看到MRedux的State，Store，Action。你可能在想flutter端的proxy是如何来的？我们知道kn的State，Store，Action都是我们在kotlin代码定义好的，但是他们上面被放置了一个注解@FlutterExport, Android的同学可以猜到吧，是编译过程中用apt去生成的dart代码！
+
 ###kn -> flutter
 
 下面我们看看反向的这条线，kn是如何把数据回传到flutter的? 前面说到kn内存里生成了action的实例，并且调用了它的run方法，里面简单的改变了state的值，对应的订阅者应该收到通知，可是我们的订阅是发生在flutter层，kn层怎么知道自己被订阅了？实际上这是个复杂的过程，简单说flutter在调用state的subscribe方法时，真的在kn的内存里创建出了state的实例，并且发生了一次订阅行为 
@@ -53,6 +59,7 @@ class Person(val name: String, val age: Int)
 ![avatar](https://note.youdao.com/yws/public/resource/6e9fd9e1dee89677c89074bd483f0af8/xmlnote/608DCDD62B554053B6AE6516D0B37F06/7591)
 
 这个也是在编译过程中用apt生成的dart端的pb代码，所以一旦数据从kn传递到flutter了，我们会把二进制的pb数据转换到这个结构里面，进一步通知订阅者去访问感兴趣的字段
+
 ##总结
 
 我们简单的说明了KnFlutterBinding这套框架是如何把flutter和kn这两个语言不同，内存不同，编译系统不同的东西结合起来work的。到这里我们可以看出核心的东西其实是apt和runtime两部分，apt解决了如何在flutter生成代理的问题，runtime解决了数据如何桥接，编码，解码，两个内存如何交互的问题。如何有兴趣了解详情可以看看我分享时写的ppt
