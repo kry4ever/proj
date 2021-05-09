@@ -1,1 +1,7 @@
-# proj
+# project record
+
+[mRedux]
+
+[KnFlutterBinding]
+
+[AndroidxMigrate]
