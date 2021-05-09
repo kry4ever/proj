@@ -34,7 +34,10 @@ google是要求我们一刀切的，即要么全是androidx，要么全是suppor
 
 具体分析可以看文档，这里简单说下就是去hook编译后的jar文件和xml，让它们变成androidx的接口，先强调下我们解决的是下层模块是support接口，上层模块是androidx的不兼容问题
 我们会在gradle task执行前后去hook。下面是伪代码
-project.gradle.taskGraph.addTaskExecutionListener(new TaskExecutionListener() {
+
+project.gradle.taskGraph.addTaskExecutionListener(
+	new TaskExecutionListener() {
+	
     @Override
     void beforeExecute(Task task) {
         try {
@@ -44,7 +47,7 @@ project.gradle.taskGraph.addTaskExecutionListener(new TaskExecutionListener() {
             e.printStackTrace()
         }
     }
-
+	
     @Override
     void afterExecute(Task task, TaskState taskState) {
         try {
@@ -57,6 +60,7 @@ project.gradle.taskGraph.addTaskExecutionListener(new TaskExecutionListener() {
 })
 
 在task执行after之后，我们需要hook原来这个task的产物，因为它原来只有support的接口，我们需要用jetifier工具生产一份androidx的jar才能让上层顺利编译，也就是generateJetifierClassIfNeed做的工作
+
 fun generateJetifierClassIfNeed(enableHook: Boolean, task: Task) {
     if (enableHook && matchLibPrepareJarTaskName(task)) {
         val jetifyProcessor: Processor = Processor.createProcessor(
