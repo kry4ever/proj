@@ -2,6 +2,8 @@
 
 [rips](Rips.md)
 
+[split](Split.md)
+
 [mRedux](mRedux.md)
 
 [KnFlutterBinding](KnFlutterBinding.md)
